@@ -1,0 +1,124 @@
+// Prisma schema for Sowntra collaborative whiteboard
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User model
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  name          String?
+  firebaseUid   String    @unique
+  profileImage  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // Relations
+  boards        Board[]   @relation("BoardOwner")
+  boardMembers  BoardMember[]
+  comments      Comment[]
+  
+  @@index([email])
+  @@index([firebaseUid])
+}
+
+// Board model
+model Board {
+  id              String    @id @default(uuid())
+  title           String
+  description     String?
+  thumbnail       String?
+  isPublic        Boolean   @default(false)
+  ownerId         String
+  yDocState       Bytes?    // Stores Yjs document state
+  lastModified    DateTime  @default(now()) @updatedAt
+  createdAt       DateTime  @default(now())
+  
+  // Relations
+  owner           User      @relation("BoardOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members         BoardMember[]
+  assets          Asset[]
+  comments        Comment[]
+  versions        BoardVersion[]
+  
+  @@index([ownerId])
+  @@index([createdAt])
+  @@index([isPublic])
+}
+
+// Board member model (for collaboration)
+model BoardMember {
+  id          String    @id @default(uuid())
+  boardId     String
+  userId      String
+  role        String    @default("viewer") // owner, editor, viewer
+  joinedAt    DateTime  @default(now())
+  
+  // Relations
+  board       Board     @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([boardId, userId])
+  @@index([boardId])
+  @@index([userId])
+}
+
+// Asset model (for images, videos, etc.)
+model Asset {
+  id          String    @id @default(uuid())
+  boardId     String
+  fileName    String
+  fileType    String
+  fileSize    Int
+  url         String
+  storageRef  String
+  uploadedAt  DateTime  @default(now())
+  
+  // Relations
+  board       Board     @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  
+  @@index([boardId])
+}
+
+// Comment model
+model Comment {
+  id          String    @id @default(uuid())
+  boardId     String
+  userId      String
+  content     String
+  positionX   Float?
+  positionY   Float?
+  resolved    Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  // Relations
+  board       Board     @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([boardId])
+  @@index([userId])
+}
+
+// Board version model (for version history)
+model BoardVersion {
+  id          String    @id @default(uuid())
+  boardId     String
+  versionName String?
+  yDocState   Bytes
+  thumbnail   String?
+  createdAt   DateTime  @default(now())
+  
+  // Relations
+  board       Board     @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  
+  @@index([boardId])
+  @@index([createdAt])
+}
+
