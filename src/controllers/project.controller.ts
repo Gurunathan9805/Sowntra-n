@@ -2,13 +2,13 @@ import { Request, Response } from 'express';
 import { prisma } from '../config/database';
 
 /**
- * Save design project data
+ * Save design project data (user projects without boardId)
  */
 export async function saveProjectData(req: Request, res: Response): Promise<void> {
   try {
-    const { boardId } = req.params;
     const userId = req.user?.dbUserId;
     const { projectData } = req.body;
+    const { boardId } = req.params;
 
     if (!userId) {
       res.status(401).json({ error: 'Unauthorized' });
@@ -20,42 +20,67 @@ export async function saveProjectData(req: Request, res: Response): Promise<void
       return;
     }
 
-    const board = await prisma.board.findUnique({
-      where: { id: boardId },
-      include: { members: true }
-    });
+    // If boardId is provided, use board-based saving
+    if (boardId) {
+      const board = await prisma.board.findUnique({
+        where: { id: boardId },
+        include: { members: true }
+      });
 
-    if (!board) {
-      res.status(404).json({ error: 'Board not found' });
-      return;
-    }
-
-    const hasAccess = 
-      board.ownerId === userId ||
-      board.members.some(m => m.userId === userId && m.role !== 'viewer');
-
-    if (!hasAccess) {
-      res.status(403).json({ error: 'Access denied' });
-      return;
-    }
-
-    const updatedBoard = await prisma.board.update({
-      where: { id: boardId },
-      data: {
-        yDocState: Buffer.from(JSON.stringify(projectData)),
-        lastModified: new Date()
-      },
-      select: {
-        id: true,
-        title: true,
-        lastModified: true
+      if (!board) {
+        res.status(404).json({ error: 'Board not found' });
+        return;
       }
-    });
 
-    res.json({
-      message: 'Project data saved successfully',
-      board: updatedBoard
-    });
+      const hasAccess = 
+        board.ownerId === userId ||
+        board.members.some(m => m.userId === userId && m.role !== 'viewer');
+
+      if (!hasAccess) {
+        res.status(403).json({ error: 'Access denied' });
+        return;
+      }
+
+      const updatedBoard = await prisma.board.update({
+        where: { id: boardId },
+        data: {
+          yDocState: Buffer.from(JSON.stringify(projectData)),
+          lastModified: new Date()
+        },
+        select: {
+          id: true,
+          title: true,
+          lastModified: true
+        }
+      });
+
+      res.json({
+        message: 'Project data saved successfully',
+        board: updatedBoard
+      });
+    } else {
+      // User project saving (without boardId)
+      const project = await prisma.board.create({
+        data: {
+          title: projectData.title || `Untitled Project ${new Date().toLocaleDateString()}`,
+          description: projectData.description || '',
+          ownerId: userId,
+          isPublic: false,
+          yDocState: Buffer.from(JSON.stringify(projectData)),
+          lastModified: new Date()
+        },
+        select: {
+          id: true,
+          title: true,
+          lastModified: true
+        }
+      });
+
+      res.json({
+        message: 'Project saved successfully',
+        project: project
+      });
+    }
   } catch (error) {
     console.error('Error saving project data:', error);
     res.status(500).json({ error: 'Failed to save project data' });
@@ -323,6 +348,190 @@ export async function restoreProjectVersion(req: Request, res: Response): Promis
   } catch (error) {
     console.error('Error restoring project version:', error);
     res.status(500).json({ error: 'Failed to restore project version' });
+  }
+}
+
+/**
+ * Get user's projects (boards)
+ */
+export async function getUserProjects(req: Request, res: Response): Promise<void> {
+  try {
+    const userId = req.user?.dbUserId;
+
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const projects = await prisma.board.findMany({
+      where: {
+        OR: [
+          { ownerId: userId },
+          { members: { some: { userId } } }
+        ]
+      },
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        isPublic: true,
+        createdAt: true,
+        lastModified: true,
+        owner: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        }
+      },
+      orderBy: { lastModified: 'desc' }
+    });
+
+    res.json({ projects });
+  } catch (error) {
+    console.error('Error getting user projects:', error);
+    res.status(500).json({ error: 'Failed to get user projects' });
+  }
+}
+
+/**
+ * Load user project by ID
+ */
+export async function loadUserProject(req: Request, res: Response): Promise<void> {
+  try {
+    const { projectId } = req.params;
+    const userId = req.user?.dbUserId;
+
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const project = await prisma.board.findFirst({
+      where: {
+        id: projectId,
+        OR: [
+          { ownerId: userId },
+          { members: { some: { userId } } }
+        ]
+      },
+      include: {
+        owner: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        }
+      }
+    });
+
+    if (!project) {
+      res.status(404).json({ error: 'Project not found' });
+      return;
+    }
+
+    const projectData = project.yDocState ? JSON.parse(project.yDocState.toString()) : {};
+
+    res.json({
+      project: {
+        id: project.id,
+        title: project.title,
+        description: project.description,
+        lastModified: project.lastModified,
+        owner: project.owner
+      },
+      projectData
+    });
+  } catch (error) {
+    console.error('Error loading user project:', error);
+    res.status(500).json({ error: 'Failed to load project' });
+  }
+}
+
+/**
+ * Update user project
+ */
+export async function updateUserProject(req: Request, res: Response): Promise<void> {
+  try {
+    const { projectId } = req.params;
+    const userId = req.user?.dbUserId;
+    const { projectData } = req.body;
+
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const project = await prisma.board.findFirst({
+      where: {
+        id: projectId,
+        ownerId: userId
+      }
+    });
+
+    if (!project) {
+      res.status(404).json({ error: 'Project not found' });
+      return;
+    }
+
+    const updatedProject = await prisma.board.update({
+      where: { id: projectId },
+      data: {
+        yDocState: Buffer.from(JSON.stringify(projectData)),
+        lastModified: new Date()
+      },
+      select: {
+        id: true,
+        title: true,
+        lastModified: true
+      }
+    });
+
+    res.json({
+      message: 'Project updated successfully',
+      project: updatedProject
+    });
+  } catch (error) {
+    console.error('Error updating project:', error);
+    res.status(500).json({ error: 'Failed to update project' });
+  }
+}
+
+/**
+ * Delete user project
+ */
+export async function deleteUserProject(req: Request, res: Response): Promise<void> {
+  try {
+    const { projectId } = req.params;
+    const userId = req.user?.dbUserId;
+
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const project = await prisma.board.findFirst({
+      where: {
+        id: projectId,
+        ownerId: userId
+      }
+    });
+
+    if (!project) {
+      res.status(404).json({ error: 'Project not found' });
+      return;
+    }
+
+    await prisma.board.delete({
+      where: { id: projectId }
+    });
+
+    res.json({ message: 'Project deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting project:', error);
+    res.status(500).json({ error: 'Failed to delete project' });
   }
 }
 
