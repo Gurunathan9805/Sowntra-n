@@ -39,9 +39,35 @@ const PORT = process.env.PORT || 4001;
 
 const server = http.createServer(app);
 
+// Define allowed origins
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:4173',
+  'http://localhost:5173',
+  'https://sowntra.com',
+  'https://www.sowntra.com',
+  'http://sowntra.com',
+  'http://www.sowntra.com',
+  'sowntra.com',
+  'www.sowntra.com'
+];
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'https://sowntra.com' ,
-  credentials: true
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.log('CORS blocked origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Content-Length', 'X-Foo', 'X-Bar']
 }));
 
 app.use(express.json({ limit: '10mb' }));
@@ -64,6 +90,15 @@ app.get('/', (_req: Request, res: Response) => {
       projects: '/api/projects',
       assets: '/api/assets'
     }
+  });
+});
+
+// CORS test endpoint
+app.get('/api/cors-test', (_req: Request, res: Response) => {
+  res.json({ 
+    message: 'CORS is working!',
+    origin: _req.headers.origin,
+    timestamp: new Date().toISOString()
   });
 });
 
